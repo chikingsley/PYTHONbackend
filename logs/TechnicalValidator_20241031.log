@@ -1,0 +1,9 @@
+2024-10-31 20:35:51,158 - TechnicalValidator - INFO - Starting technical validation for commercial project
+2024-10-31 20:35:51,218 - TechnicalValidator - INFO - Researching current standards
+2024-10-31 20:35:59,966 - TechnicalValidator - ERROR - Error validating specifications: string indices must be integers, not 'str'
+2024-10-31 20:36:00,976 - TechnicalValidator - INFO - Starting technical validation for commercial project
+2024-10-31 20:36:00,990 - TechnicalValidator - INFO - Researching current standards
+2024-10-31 20:36:07,554 - TechnicalValidator - ERROR - Error validating specifications: string indices must be integers, not 'str'
+2024-10-31 20:36:09,557 - TechnicalValidator - INFO - Starting technical validation for commercial project
+2024-10-31 20:36:09,585 - TechnicalValidator - INFO - Researching current standards
+2024-10-31 20:36:18,913 - TechnicalValidator - ERROR - Error validating specifications: string indices must be integers, not 'str'
