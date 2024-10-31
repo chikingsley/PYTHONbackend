@@ -28,13 +28,59 @@ class TechnicalValidator(BaseTool):
     
     specifications: dict = Field(
         ..., 
-        description="Technical specifications to validate including materials, methods, and timelines"
+        description="Technical specifications to validate. Can include area, conversion_type, special_requirements, compliance_standards, systems, materials, methods, and timeline"
     )
     
     project_type: str = Field(
         ..., 
         description="Type of construction project (e.g., 'residential', 'commercial', 'industrial')"
     )
+
+    def _format_specifications_for_prompt(self, specs):
+        """Helper method to format specifications consistently"""
+        formatted_specs = []
+        
+        # Handle area and conversion type if present
+        if 'area' in specs:
+            formatted_specs.append(f"Area: {specs['area']}")
+        if 'conversion_type' in specs:
+            formatted_specs.append(f"Conversion Type: {specs['conversion_type']}")
+            
+        # Handle special requirements
+        if 'special_requirements' in specs:
+            formatted_specs.append("Special Requirements:")
+            for req in specs['special_requirements']:
+                formatted_specs.append(f"- {req}")
+                
+        # Handle compliance standards
+        if 'compliance_standards' in specs:
+            formatted_specs.append("Compliance Standards:")
+            for std in specs['compliance_standards']:
+                formatted_specs.append(f"- {std}")
+                
+        # Handle systems
+        if 'systems' in specs:
+            formatted_specs.append("Systems:")
+            for sys in specs['systems']:
+                formatted_specs.append(f"- {sys}")
+                
+        # Handle traditional format (materials, methods, timeline)
+        if 'materials' in specs:
+            formatted_specs.append("Materials:")
+            for mat, desc in specs['materials'].items():
+                formatted_specs.append(f"- {mat}: {desc}")
+                
+        if 'methods' in specs:
+            formatted_specs.append("Methods:")
+            for method, desc in specs['methods'].items():
+                formatted_specs.append(f"- {method}: {desc}")
+                
+        if 'timeline' in specs:
+            formatted_specs.append("Timeline:")
+            for phase, duration in specs['timeline'].items():
+                formatted_specs.append(f"- {phase}: {duration}")
+                
+        return "\n".join(formatted_specs)
 
     @retry_with_backoff(retries=3, backoff_in_seconds=1)
     @handle_api_error
@@ -49,6 +95,9 @@ class TechnicalValidator(BaseTool):
             db = duckdb.connect(DUCKDB_PATH)
             claude = anthropic.Client(api_key=CLAUDE_API_KEY)
             tavily = TavilyClient(api_key=TAVILY_API_KEY)
+            
+            # Format specifications consistently
+            formatted_specs = self._format_specifications_for_prompt(self.specifications)
             
             # Research current standards
             logger.info("Researching current standards")
@@ -69,7 +118,7 @@ class TechnicalValidator(BaseTool):
             Validate the following technical specifications against current industry standards:
             
             Specifications:
-            {self.specifications}
+            {formatted_specs}
             
             Current Standards and Best Practices:
             {standards_summary}
