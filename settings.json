@@ -140,7 +140,7 @@
             {
                 "function": {
                     "name": "DocumentGenerator",
-                    "description": "Generates construction documents using templates and project specifications.\nUses Claude AI for content generation and Milvus for template matching.",
+                    "description": "Generates construction documents using templates and project specifications.\nUses Mistral AI for content generation and local storage for documents.",
                     "parameters": {
                         "properties": {
                             "project_spec": {
@@ -270,7 +270,7 @@
                     "parameters": {
                         "properties": {
                             "specifications": {
-                                "description": "Technical specifications to validate including materials, methods, and timelines",
+                                "description": "Technical specifications to validate. Can include area, conversion_type, special_requirements, compliance_standards, systems, materials, methods, and timeline",
                                 "title": "Specifications",
                                 "type": "object"
                             },

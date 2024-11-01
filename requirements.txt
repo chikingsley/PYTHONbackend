@@ -2,6 +2,7 @@
 agency-swarm>=0.1.0
 fastapi>=0.104.1
 pydantic>=2.5.2
+uvicorn>=0.15.0
 
 # Database and Storage
 duckdb>=0.9.2
