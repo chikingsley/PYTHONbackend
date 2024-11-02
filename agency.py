@@ -205,18 +205,12 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
             try:
                 data = await websocket.receive_json()
                 print(f"Received message data:", data)
-            data = await websocket.receive_json()
-            print(f"Received message data:", data)
-            
-            try:
+                
+                if "target_agent" not in data or "message" not in data or "source_agent" not in data:
+                    raise ValueError("Missing required fields in message")
+                
                 if data["target_agent"] == "orchestration-agent":
                     print("Starting orchestration flow...")
-                    # Initialize orchestration agent with environment variable database path
-                    orchestration_agent = Agent(
-                        name="Orchestration Agent",
-                        role="orchestration",
-                        duckdb_path=os.getenv('DUCKDB_PATH', '/Users/simonpeacocks/Documents/GitHub/fullapp/PYTHONbackend/construction_db.db')
-                    )
                     try:
                         # Send initial progress
                         await manager.broadcast_progress(
@@ -280,14 +274,14 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
                         }
                         await manager.broadcast_to_agent(agent_id, error_response)
                         
-            except ValueError as e:
-                print(f"Error processing message: {e}")
+            except json.JSONDecodeError:
+                print("Error: Invalid JSON received")
                 await websocket.send_json({
                     "type": "error",
                     "data": {
                         "name": "System",
                         "type": "error",
-                        "message": str(e)
+                        "message": "Invalid JSON format"
                     }
                 })
                 
@@ -297,6 +291,7 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
     except Exception as e:
         print(f"Error in websocket handler: {str(e)}")
         manager.disconnect(agent_id)
+        raise
 
 if __name__ == "__main__":
     import uvicorn
