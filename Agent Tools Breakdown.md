@@ -5,7 +5,7 @@ https://vrsen.github.io/agency-swarm/advanced-usage/tools/ - exampledocumentatio
 - **FastAPI**: Base framework for all agents https://github.com/fastapi/fastapi 
 - **Pydantic**: Data validation and settings management https://docs.pydantic.dev/latest/
 - **Redis**: Inter-agent communication https://github.com/redis/redis - for caching and real-time features
-- **Claude**: Core AI functionality https://docs.anthropic.com/en/api/getting-started api - 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
+- **Claude**: Core AI functionality https://docs.anthropic.com/en/api/getting-started 
 
 * ## 1. Document Creation Agent	•	Essential for core functionality
 * Well-defined responsibilities
@@ -67,7 +67,7 @@ class DocumentCreationAgent:
   - Track technical standards
   - Store validation history
 
-- **Tavily API** https://docs.tavily.com/docs/welcome  [api - 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]
+- **Tavily API** https://docs.tavily.com/docs/welcome  
   - Research technical standards
   - Verify methodologies
   - Check industry practices

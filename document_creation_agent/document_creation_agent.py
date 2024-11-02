@@ -67,9 +67,11 @@ class DocumentCreationAgent(Agent):
         self.db = duckdb.connect('document_store.db')
         self.setup_database()
         
-        # Initialize Milvus connection
-        connections.connect(host='localhost', port='19530')
-        self.vector_db = Collection("templates")
+        # Initialize vector storage
+        self.use_milvus = kwargs.get('use_milvus', False)
+        if self.use_milvus:
+            connections.connect(host='localhost', port='19530')
+            self.vector_db = Collection("templates")
         
         # Add tools
         tools = kwargs.get('tools', []) + [
@@ -88,6 +90,34 @@ class DocumentCreationAgent(Agent):
             **kwargs
         )
 
+    def search_similar_templates(self, embedding, limit=1):
+        """Search for similar templates using either Milvus or DuckDB"""
+        if self.use_milvus:
+            return self.vector_db.search(
+                collection="templates",
+                vector=embedding,
+                limit=limit
+            )
+        else:
+            # Use cosine similarity in DuckDB
+            return self.db.execute("""
+                WITH vector_similarities AS (
+                    SELECT 
+                        id,
+                        1 - (
+                            DOT_PRODUCT(vector, ?)
+                            / (SQRT(DOT_PRODUCT(vector, vector)) * SQRT(DOT_PRODUCT(?, ?)))
+                        ) as distance
+                    FROM vector_store
+                    WHERE collection = 'templates'
+                    ORDER BY distance ASC
+                    LIMIT ?
+                )
+                SELECT t.*, v.distance
+                FROM vector_similarities v
+                JOIN templates t ON t.template_id = v.id
+            """, (embedding, embedding, embedding, limit)).fetchall()
+
     def setup_database(self):
         """Initialize DuckDB tables"""
         self.db.execute("""
@@ -96,6 +126,7 @@ class DocumentCreationAgent(Agent):
                 template_id VARCHAR,
                 metadata JSON
             );
+            
             CREATE TABLE IF NOT EXISTS document_versions (
                 doc_id VARCHAR,
                 version INT,
@@ -103,9 +134,18 @@ class DocumentCreationAgent(Agent):
                 reason TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            
             CREATE TABLE IF NOT EXISTS templates (
                 template_id VARCHAR PRIMARY KEY,
                 content TEXT,
+                metadata JSON
+            );
+            
+            -- Vector storage table (used when Milvus is not available)
+            CREATE TABLE IF NOT EXISTS vector_store (
+                id VARCHAR PRIMARY KEY,
+                collection VARCHAR,
+                vector DOUBLE[],
                 metadata JSON
             );
         """)

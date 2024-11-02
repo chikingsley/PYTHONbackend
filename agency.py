@@ -59,14 +59,29 @@ redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379')) 
 # Get DuckDB path from environment variables
 duckdb_path = os.getenv('DUCKDB_PATH', '/Users/simonpeacocks/Documents/GitHub/fullapp/PYTHONbackend/construction_db.db')
 duckdb_conn = duckdb.connect(duckdb_path)
-# Initialize Milvus
+# Try to connect to Milvus, but don't fail if it's not available
 try:
     connections.connect(
-        host=os.getenv('MILVUS_HOST', 'localhost'),  # Added default value
-        port=os.getenv('MILVUS_PORT', '19530')  # Added default value
+        host=os.getenv('MILVUS_HOST', 'localhost'),
+        port=os.getenv('MILVUS_PORT', '19530')
     )
+    print("Successfully connected to Milvus")
+    use_milvus = True
 except Exception as e:
-    print(f"Warning: Failed to connect to Milvus: {str(e)}")
+    print(f"Warning: Milvus not available, using DuckDB for vector storage: {str(e)}")
+    use_milvus = False
+    # Create vector storage table in DuckDB
+    duckdb_conn.execute("""
+        CREATE TABLE IF NOT EXISTS vector_store (
+            id VARCHAR PRIMARY KEY,
+            collection VARCHAR,
+            vector DOUBLE[],
+            metadata JSON
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_vector_collection 
+        ON vector_store(collection);
+    """)
 
 # Base configuration for all agents
 agent_config = {
@@ -75,7 +90,8 @@ agent_config = {
     "max_tokens": int(os.getenv('MAX_TOKENS', 4000)),
     "tools": [SendMessage, GetResponse],  # Add base tools to all agents
     "redis_client": redis_client,
-    "duckdb_conn": duckdb_conn
+    "duckdb_conn": duckdb_conn,
+    "use_milvus": use_milvus
 }
 
 # Initialize agents with shared config and specific tools

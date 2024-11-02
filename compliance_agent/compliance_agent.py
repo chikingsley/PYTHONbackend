@@ -88,9 +88,11 @@ class ComplianceAgent(Agent):
         self.db = duckdb.connect('compliance.db')
         self.setup_database()
         
-        # Initialize Milvus
-        connections.connect(host='localhost', port='19530')
-        self.vector_db = Collection("compliance_cases")
+        # Initialize vector storage
+        self.use_milvus = kwargs.get('use_milvus', False)
+        if self.use_milvus:
+            connections.connect(host='localhost', port='19530')
+            self.vector_db = Collection("compliance_cases")
         
         # Add tools
         tools = kwargs.get('tools', []) + [
@@ -107,6 +109,34 @@ class ComplianceAgent(Agent):
             tools=tools,
             **kwargs
         )
+
+    def search_similar_cases(self, embedding, limit=5):
+        """Search for similar cases using either Milvus or DuckDB"""
+        if self.use_milvus:
+            return self.vector_db.search(
+                collection="compliance_cases",
+                vector=embedding,
+                limit=limit
+            )
+        else:
+            # Use cosine similarity in DuckDB
+            return self.db.execute("""
+                WITH vector_similarities AS (
+                    SELECT 
+                        id,
+                        1 - (
+                            DOT_PRODUCT(vector, ?)
+                            / (SQRT(DOT_PRODUCT(vector, vector)) * SQRT(DOT_PRODUCT(?, ?)))
+                        ) as distance
+                    FROM vector_store
+                    WHERE collection = 'compliance_cases'
+                    ORDER BY distance ASC
+                    LIMIT ?
+                )
+                SELECT c.*, v.distance
+                FROM vector_similarities v
+                JOIN compliance_cases c ON c.case_id = v.id
+            """, (embedding, embedding, embedding, limit)).fetchall()
 
     def setup_database(self):
         """Initialize DuckDB tables"""
