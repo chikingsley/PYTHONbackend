@@ -94,120 +94,161 @@ manager = ConnectionManager()
 
 @app.websocket("/ws/{agent_id}")
 async def websocket_endpoint(websocket: WebSocket, agent_id: str):
+    print(f"New connection request from agent_id: {agent_id}")
     await manager.connect(websocket, agent_id)
     try:
         while True:
+            print(f"Waiting for message from {agent_id}...")
             data = await websocket.receive_json()
+            print(f"Received message data:", data)
             
-            # Start conversation flow with progress updates
-            if data["target_agent"] == "orchestration-agent":
-                # Initial requirements gathering
-                await manager.broadcast_progress(
-                    data["source_agent"],
-                    "orchestration-agent",
-                    20,
-                    "Gathering project requirements..."
-                )
-                
-                response = construction_agency.get_completion(
-                    message=data["message"],
-                    recipient_agent="orchestration-agent"
-                )
-                
-                # Process requirements with technical agent
-                await manager.broadcast_progress(
-                    "orchestration-agent",
-                    "technical-agent",
-                    40,
-                    "Validating technical specifications..."
-                )
-                
-                tech_response = construction_agency.get_completion(
-                    message=response,
-                    recipient_agent="technical-agent"
-                )
-                
-                # Compliance check
-                await manager.broadcast_progress(
-                    "technical-agent",
-                    "compliance-agent",
-                    60,
-                    "Checking regulatory compliance..."
-                )
-                
-                compliance_response = construction_agency.get_completion(
-                    message=tech_response,
-                    recipient_agent="compliance-agent"
-                )
-                
-                # Cost analysis
-                await manager.broadcast_progress(
-                    "compliance-agent",
-                    "cost-agent",
-                    80,
-                    "Analyzing costs and budget..."
-                )
-                
-                cost_response = construction_agency.get_completion(
-                    message=compliance_response,
-                    recipient_agent="cost-agent"
-                )
-                
-                # Generate documents
-                await manager.broadcast_progress(
-                    "cost-agent",
-                    "document-agent",
-                    90,
-                    "Generating project documents..."
-                )
-                
-                doc_response = construction_agency.get_completion(
-                    message=cost_response,
-                    recipient_agent="document-agent"
-                )
-                
-                # Final resource allocation
-                await manager.broadcast_progress(
-                    "document-agent",
-                    "resource-agent",
-                    100,
-                    "Allocating project resources..."
-                )
-                
-                final_response = construction_agency.get_completion(
-                    message=doc_response,
-                    recipient_agent="resource-agent"
-                )
-                
-                # Send completion status
-                await manager.broadcast_to_agent(agent_id, {
-                    "type": "response",
-                    "data": {
-                        "status": "complete",
-                        "message": "Project planning completed"
-                    },
-                    "source": "resource-agent",
-                    "target": data["source_agent"]
-                })
-            
-            else:
-                # Handle direct agent-to-agent communication
-                response = construction_agency.get_completion(
-                    message=data["message"],
-                    recipient_agent=data["target_agent"]
-                )
-                
-                await manager.broadcast_to_agent(agent_id, {
-                    "type": "response",
-                    "data": response,
-                    "source": data["source_agent"],
-                    "target": data["target_agent"]
-                })
-                
+            try:
+                if not isinstance(data, dict):
+                    raise ValueError(f"Invalid message format: {data}")
+                    
+                if "message" not in data or "target_agent" not in data:
+                    raise ValueError(f"Missing required fields in message: {data}")
+
+                # Start conversation flow with progress updates
+                if data["target_agent"] == "orchestration-agent":
+                    print("Starting orchestration flow...")
+                    
+                    # Initial requirements gathering
+                    await manager.broadcast_progress(
+                        data["source_agent"],
+                        "orchestration-agent",
+                        20,
+                        "Gathering project requirements..."
+                    )
+                    
+                    try:
+                        response = construction_agency.get_completion(
+                            message=data["message"],
+                            recipient_agent="orchestration-agent"
+                        )
+                        print(f"Orchestration agent response: {response}")
+                        
+                        # Send initial response back to frontend
+                        await manager.broadcast_to_agent(agent_id, {
+                            "type": "response",
+                            "data": {
+                                "message": response
+                            },
+                            "source": "orchestration-agent",
+                            "target": data["source_agent"]
+                        })
+                        
+                        # Process requirements with technical agent
+                        await manager.broadcast_progress(
+                            "orchestration-agent",
+                            "technical-agent",
+                            40,
+                            "Validating technical specifications..."
+                        )
+                        
+                        tech_response = construction_agency.get_completion(
+                            message=response,
+                            recipient_agent="technical-agent"
+                        )
+                        
+                        # Compliance check
+                        await manager.broadcast_progress(
+                            "technical-agent",
+                            "compliance-agent",
+                            60,
+                            "Checking regulatory compliance..."
+                        )
+                        
+                        compliance_response = construction_agency.get_completion(
+                            message=tech_response,
+                            recipient_agent="compliance-agent"
+                        )
+                        
+                        # Cost analysis
+                        await manager.broadcast_progress(
+                            "compliance-agent",
+                            "cost-agent",
+                            80,
+                            "Analyzing costs and budget..."
+                        )
+                        
+                        cost_response = construction_agency.get_completion(
+                            message=compliance_response,
+                            recipient_agent="cost-agent"
+                        )
+                        
+                        # Generate documents
+                        await manager.broadcast_progress(
+                            "cost-agent",
+                            "document-agent",
+                            90,
+                            "Generating project documents..."
+                        )
+                        
+                        doc_response = construction_agency.get_completion(
+                            message=cost_response,
+                            recipient_agent="document-agent"
+                        )
+                        
+                        # Final resource allocation
+                        await manager.broadcast_progress(
+                            "document-agent",
+                            "resource-agent",
+                            100,
+                            "Allocating project resources..."
+                        )
+                        
+                        final_response = construction_agency.get_completion(
+                            message=doc_response,
+                            recipient_agent="resource-agent"
+                        )
+                        
+                        # Send completion status
+                        await manager.broadcast_to_agent(agent_id, {
+                            "type": "response",
+                            "data": {
+                                "status": "complete",
+                                "message": final_response
+                            },
+                            "source": "resource-agent",
+                            "target": data["source_agent"]
+                        })
+                        
+                    except Exception as e:
+                        print(f"Error in agent completion: {str(e)}")
+                        await manager.broadcast_to_agent(agent_id, {
+                            "type": "error",
+                            "data": {
+                                "message": f"Error processing request: {str(e)}"
+                            }
+                        })
+                        continue
+                    
+                else:
+                    # Handle direct agent-to-agent communication
+                    try:
+                        response = construction_agency.get_completion(
+                            message=data["message"],
+                            recipient_agent=data["target_agent"]
+                        )
+                        
+                        await manager.broadcast_to_agent(agent_id, {
+                            "type": "response",
+                            "data": {
+                                "message": response
+                            },
+                            "source": data["source_agent"],
+                            "target": data["target_agent"]
+                        })
+                        
+                    except Exception as e:
+                        print(f"Error in direct communication: {str(e)}")
+                        
     except WebSocketDisconnect:
+        print(f"WebSocket disconnected for agent_id: {agent_id}")
         manager.disconnect(agent_id)
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error in websocket handler: {str(e)}")
         manager.disconnect(agent_id)
 
 @app.get("/api/agents")
