@@ -1,16 +1,40 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from agency_swarm import Agency
-from typing import Dict, Optional
+from agency_swarm import Agency, Agent
+from agency_swarm.tools import BaseTool
+from typing import Dict, Optional, List, AsyncGenerator
 import asyncio
 import json
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+import redis
+from pymilvus import connections
+import duckdb
 
 # Load environment variables
 load_dotenv()
 
-# Keep existing agent imports and initialization
+# Define base tools that all agents can use
+class SendMessage(BaseTool):
+    """Use this tool to send a message to another agent"""
+    message: str = Field(..., description="The message to send")
+    recipient: str = Field(..., description="The agent to send the message to")
+
+    def run(self):
+        return f"Message sent to {self.recipient}: {self.message}"
+
+class GetResponse(BaseTool):
+    """Use this tool to get a response from another agent"""
+    agent_id: str = Field(..., description="The agent to get the response from")
+
+    def run(self):
+        response = self._shared_state.get(f"response_{self.agent_id}")
+        if not response:
+            return "No response available yet"
+        return response
+
+# Keep existing agent imports but initialize with tools
 from document_creation_agent.document_creation_agent import DocumentCreationAgent
 from technical_validation_agent.technical_validation_agent import TechnicalValidationAgent
 from compliance_agent.compliance_agent import ComplianceAgent
@@ -24,40 +48,102 @@ app = FastAPI()
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Consider restricting this in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize agents
-doc_agent = DocumentCreationAgent()
-tech_agent = TechnicalValidationAgent()
-compliance_agent = ComplianceAgent()
-cost_agent = CostAnalysisAgent()
-orchestration_agent = ProjectOrchestrationAgent()
-resource_agent = ResourceManagementAgent()
+# Initialize database connections
+redis_client = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))  # Added default value
+# Get DuckDB path from environment variables
+duckdb_path = os.getenv('DUCKDB_PATH', '/Users/simonpeacocks/Documents/GitHub/fullapp/PYTHONbackend/construction_db.db')
+duckdb_conn = duckdb.connect(duckdb_path)
+# Initialize Milvus
+try:
+    connections.connect(
+        host=os.getenv('MILVUS_HOST', 'localhost'),  # Added default value
+        port=os.getenv('MILVUS_PORT', '19530')  # Added default value
+    )
+except Exception as e:
+    print(f"Warning: Failed to connect to Milvus: {str(e)}")
 
-# Create agency with existing communication flows
+# Base configuration for all agents
+agent_config = {
+    "model": os.getenv('AI_MODEL', 'gpt-4-1106-preview'),
+    "temperature": float(os.getenv('TEMPERATURE', 0.2)),
+    "max_tokens": int(os.getenv('MAX_TOKENS', 4000)),
+    "tools": [SendMessage, GetResponse],  # Add base tools to all agents
+    "redis_client": redis_client,
+    "duckdb_conn": duckdb_conn
+}
+
+# Initialize agents with shared config and specific tools
+doc_agent = DocumentCreationAgent(
+    name="Document Creation Agent",
+    description="Creates and manages construction documentation",
+    instructions="./document_creation_agent/instructions.md",
+    **agent_config
+)
+
+tech_agent = TechnicalValidationAgent(
+    name="Technical Validation Agent",
+    description="Validates technical aspects and specifications",
+    instructions="./technical_validation_agent/instructions.md",
+    **agent_config
+)
+
+compliance_agent = ComplianceAgent(
+    name="Compliance Agent",
+    description="Ensures regulatory compliance",
+    instructions="./compliance_agent/instructions.md",
+    **agent_config
+)
+
+cost_agent = CostAnalysisAgent(
+    name="Cost Analysis Agent",
+    description="Analyzes costs and validates budgets",
+    instructions="./cost_analysis_agent/instructions.md",
+    **agent_config
+)
+
+orchestration_agent = ProjectOrchestrationAgent(
+    name="Project Orchestration Agent",
+    description="Coordinates project workflow and agent communication",
+    instructions="./project_orchestration_agent/instructions.md",
+    **agent_config
+)
+
+resource_agent = ResourceManagementAgent(
+    name="Resource Management Agent",
+    description="Manages project resources and allocations",
+    instructions="./resource_management_agent/instructions.md",
+    **agent_config
+)
+
+# Create agency with proper flow and configuration
 construction_agency = Agency(
     [
-        orchestration_agent,
-        [orchestration_agent, doc_agent],
+        orchestration_agent,  # Entry point for user communication
         [orchestration_agent, tech_agent],
         [orchestration_agent, compliance_agent],
         [orchestration_agent, cost_agent],
         [orchestration_agent, resource_agent],
-        [doc_agent, tech_agent],
-        [doc_agent, compliance_agent],
-        [doc_agent, cost_agent],
         [tech_agent, compliance_agent],
         [tech_agent, resource_agent],
         [compliance_agent, resource_agent],
         [cost_agent, resource_agent],
+        # Document agent comes last as it needs info from others
+        [orchestration_agent, doc_agent],
+        [doc_agent, tech_agent],
+        [doc_agent, compliance_agent],
+        [doc_agent, cost_agent],
     ],
     shared_instructions="agency_manifesto.md",
     temperature=0.2,
-    max_prompt_tokens=4000
+    max_prompt_tokens=25000,
+    async_mode='threading',  # Enable async communication
+    shared_files='shared_files'  # For sharing resources between agents
 )
 
 # WebSocket connection manager
@@ -78,8 +164,7 @@ class ConnectionManager:
             await self.active_connections[agent_id].send_json(message)
 
     async def broadcast_progress(self, source: str, target: str, progress: int, message: str):
-        """Broadcast progress updates to frontend"""
-        for agent_id, websocket in self.active_connections.items():
+        for websocket in self.active_connections.values():
             await websocket.send_json({
                 "type": "progress",
                 "source": source,
@@ -92,6 +177,24 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Add this function for streaming responses
+async def stream_completion(message: str, recipient_agent: Agent) -> AsyncGenerator[str, None]:
+    """Stream the completion response"""
+    try:
+        response_stream = construction_agency.get_completion(
+            message=message,
+            recipient_agent=recipient_agent,
+            stream=True  # Enable streaming
+        )
+        
+        async for response_chunk in response_stream:
+            if response_chunk:
+                yield response_chunk
+    except Exception as e:
+        print(f"Error in stream_completion: {str(e)}")
+        yield f"Error: {str(e)}"
+
+# Modify your websocket endpoint to handle streaming
 @app.websocket("/ws/{agent_id}")
 async def websocket_endpoint(websocket: WebSocket, agent_id: str):
     print(f"New connection request from agent_id: {agent_id}")
@@ -99,171 +202,101 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
     try:
         while True:
             print(f"Waiting for message from {agent_id}...")
+            try:
+                data = await websocket.receive_json()
+                print(f"Received message data:", data)
             data = await websocket.receive_json()
             print(f"Received message data:", data)
             
             try:
-                if not isinstance(data, dict):
-                    raise ValueError(f"Invalid message format: {data}")
-                    
-                if "message" not in data or "target_agent" not in data:
-                    raise ValueError(f"Missing required fields in message: {data}")
-
-                # Start conversation flow with progress updates
                 if data["target_agent"] == "orchestration-agent":
                     print("Starting orchestration flow...")
-                    
-                    # Initial requirements gathering
-                    await manager.broadcast_progress(
-                        data["source_agent"],
-                        "orchestration-agent",
-                        20,
-                        "Gathering project requirements..."
+                    # Initialize orchestration agent with environment variable database path
+                    orchestration_agent = Agent(
+                        name="Orchestration Agent",
+                        role="orchestration",
+                        duckdb_path=os.getenv('DUCKDB_PATH', '/Users/simonpeacocks/Documents/GitHub/fullapp/PYTHONbackend/construction_db.db')
                     )
-                    
                     try:
-                        response = construction_agency.get_completion(
-                            message=data["message"],
-                            recipient_agent="orchestration-agent"
+                        # Send initial progress
+                        await manager.broadcast_progress(
+                            data["source_agent"],
+                            "orchestration-agent",
+                            20,
+                            "Gathering project requirements..."
                         )
-                        print(f"Orchestration agent response: {response}")
                         
-                        # Send initial response back to frontend
-                        await manager.broadcast_to_agent(agent_id, {
+                        # Stream the response
+                        async for response_chunk in stream_completion(
+                            message=data["message"],
+                            recipient_agent=orchestration_agent
+                        ):
+                            # Send each chunk to the frontend
+                            chunk_data = {
+                                "type": "stream",
+                                "data": {
+                                    "name": "Orchestration Agent",
+                                    "type": "orchestration",
+                                    "status": "processing",
+                                    "message": response_chunk,
+                                    "currentTask": "Processing construction project request",
+                                    "progress": 25
+                                },
+                                "source": "orchestration-agent",
+                                "target": data["source_agent"]
+                            }
+                            
+                            await manager.broadcast_to_agent(agent_id, chunk_data)
+                        
+                        # Send completion message
+                        final_response = {
                             "type": "response",
                             "data": {
-                                "message": response
+                                "name": "Orchestration Agent",
+                                "type": "orchestration",
+                                "status": "complete",
+                                "message": "Task completed",
+                                "progress": 100
                             },
                             "source": "orchestration-agent",
                             "target": data["source_agent"]
-                        })
+                        }
                         
-                        # Process requirements with technical agent
-                        await manager.broadcast_progress(
-                            "orchestration-agent",
-                            "technical-agent",
-                            40,
-                            "Validating technical specifications..."
-                        )
-                        
-                        tech_response = construction_agency.get_completion(
-                            message=response,
-                            recipient_agent="technical-agent"
-                        )
-                        
-                        # Compliance check
-                        await manager.broadcast_progress(
-                            "technical-agent",
-                            "compliance-agent",
-                            60,
-                            "Checking regulatory compliance..."
-                        )
-                        
-                        compliance_response = construction_agency.get_completion(
-                            message=tech_response,
-                            recipient_agent="compliance-agent"
-                        )
-                        
-                        # Cost analysis
-                        await manager.broadcast_progress(
-                            "compliance-agent",
-                            "cost-agent",
-                            80,
-                            "Analyzing costs and budget..."
-                        )
-                        
-                        cost_response = construction_agency.get_completion(
-                            message=compliance_response,
-                            recipient_agent="cost-agent"
-                        )
-                        
-                        # Generate documents
-                        await manager.broadcast_progress(
-                            "cost-agent",
-                            "document-agent",
-                            90,
-                            "Generating project documents..."
-                        )
-                        
-                        doc_response = construction_agency.get_completion(
-                            message=cost_response,
-                            recipient_agent="document-agent"
-                        )
-                        
-                        # Final resource allocation
-                        await manager.broadcast_progress(
-                            "document-agent",
-                            "resource-agent",
-                            100,
-                            "Allocating project resources..."
-                        )
-                        
-                        final_response = construction_agency.get_completion(
-                            message=doc_response,
-                            recipient_agent="resource-agent"
-                        )
-                        
-                        # Send completion status
-                        await manager.broadcast_to_agent(agent_id, {
-                            "type": "response",
-                            "data": {
-                                "status": "complete",
-                                "message": final_response
-                            },
-                            "source": "resource-agent",
-                            "target": data["source_agent"]
-                        })
+                        await manager.broadcast_to_agent(agent_id, final_response)
                         
                     except Exception as e:
-                        print(f"Error in agent completion: {str(e)}")
-                        await manager.broadcast_to_agent(agent_id, {
+                        print(f"Error in orchestration flow: {str(e)}")
+                        error_response = {
                             "type": "error",
                             "data": {
-                                "message": f"Error processing request: {str(e)}"
-                            }
-                        })
-                        continue
-                    
-                else:
-                    # Handle direct agent-to-agent communication
-                    try:
-                        response = construction_agency.get_completion(
-                            message=data["message"],
-                            recipient_agent=data["target_agent"]
-                        )
-                        
-                        await manager.broadcast_to_agent(agent_id, {
-                            "type": "response",
-                            "data": {
-                                "message": response
+                                "name": "Orchestration Agent",
+                                "type": "orchestration",
+                                "status": "error",
+                                "message": f"Error processing request: {str(e)}",
+                                "error": str(e)
                             },
-                            "source": data["source_agent"],
-                            "target": data["target_agent"]
-                        })
+                            "source": "orchestration-agent",
+                            "target": data["source_agent"]
+                        }
+                        await manager.broadcast_to_agent(agent_id, error_response)
                         
-                    except Exception as e:
-                        print(f"Error in direct communication: {str(e)}")
-                        
+            except ValueError as e:
+                print(f"Error processing message: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "data": {
+                        "name": "System",
+                        "type": "error",
+                        "message": str(e)
+                    }
+                })
+                
     except WebSocketDisconnect:
         print(f"WebSocket disconnected for agent_id: {agent_id}")
         manager.disconnect(agent_id)
     except Exception as e:
         print(f"Error in websocket handler: {str(e)}")
         manager.disconnect(agent_id)
-
-@app.get("/api/agents")
-async def get_agents():
-    return {
-        "agents": [
-            {"id": "document", "name": "Document Creation Agent"},
-            {"id": "technical", "name": "Technical Validation Agent"},
-            {"id": "compliance", "name": "Compliance Agent"},
-            {"id": "cost", "name": "Cost Analysis Agent"},
-            {"id": "orchestration", "name": "Project Orchestration Agent"},
-            {"id": "resource", "name": "Resource Management Agent"}
-        ],
-        "flows": construction_agency.agency_chart
-    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -44,11 +44,11 @@
                         "$defs": {
                             "recipient": {
                                 "enum": [
-                                    "Document Creation Agent",
                                     "Technical Validation Agent",
                                     "Compliance Agent",
                                     "Cost Analysis Agent",
-                                    "Resource Management Agent"
+                                    "Resource Management Agent",
+                                    "Document Creation Agent"
                                 ],
                                 "title": "recipient",
                                 "type": "string"
@@ -66,7 +66,7 @@
                                         "$ref": "#/$defs/recipient"
                                     }
                                 ],
-                                "description": "Document Creation Agent: Specialized agent responsible for creating, managing and validating construction documentation\nTechnical Validation Agent: Specialized agent responsible for validating technical specifications and construction methodologies\nCompliance Agent: Specialized agent responsible for ensuring regulatory compliance and permit management\nCost Analysis Agent: Specialized agent responsible for project cost estimation, analysis, and optimization\nResource Management Agent: Specialized agent responsible for allocating and monitoring project resources\n"
+                                "description": "Technical Validation Agent: Specialized agent responsible for validating technical specifications and construction methodologies\nCompliance Agent: Specialized agent responsible for ensuring regulatory compliance and permit management\nCost Analysis Agent: Specialized agent responsible for project cost estimation, analysis, and optimization\nResource Management Agent: Specialized agent responsible for allocating and monitoring project resources\nDocument Creation Agent: Specialized agent responsible for creating, managing and validating construction documentation\n"
                             },
                             "message": {
                                 "description": "Specify the task required for the recipient agent to complete. Focus on clarifying what the task entails, rather than providing exact instructions.",
